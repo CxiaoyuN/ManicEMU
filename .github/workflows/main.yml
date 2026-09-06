@@ -1,0 +1,24 @@
+
+      - name: Verify JIT embedded
+              run: |
+                        cd ManicEmu/build/Release-iphoneos
+                                  echo "=== Checking JIT symbols ==="
+                                            nm ManicEmu.app/ManicEmu | grep -i jit || echo "JIT symbols not found"
+                                                      echo "=== Checking entitlements ==="
+                                                                codesign -d --entitlements - ManicEmu.app/ManicEmu 2>/dev/null | head -30 || true
+
+                                                                      - name: Package IPA
+                                                                              run: |
+                                                                                        cd ManicEmu/build/Release-iphoneos
+                                                                                                  mkdir -p Payload
+                                                                                                            cp -r ManicEmu.app Payload/
+                                                                                                                      zip -r ManicEMU-TrollStore-JIT.ipa Payload/
+                                                                                                                                ls -lh ManicEMU-TrollStore-JIT.ipa
+                                                                                                                                
+                                                                                                                                      - name: Upload IPA
+                                                                                                                                              uses: actions/upload-artifact@v4
+                                                                                                                                                      with:
+                                                                                                                                                                name: ManicEMU-TrollStore-JIT
+                                                                                                                                                                          path: ManicEmu/build/Release-iphoneos/ManicEMU-TrollStore-JIT.ipa
+                                                                                                                                                                                    retention-days: 30
+                                                                                                                                                                                    
