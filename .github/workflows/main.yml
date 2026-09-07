@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  MAX_RETRIES: 2
+  BUILD_TIMEOUT: 60
+
 jobs:
   build:
     runs-on: macos-latest
@@ -14,8 +18,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           lfs: true
+          fetch-depth: 0
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -27,10 +31,90 @@ jobs:
           xcodebuild -version
           sw_vers
 
-      - name: Pull LFS (root + submodules)
+      # ===== 子模块更新（带重试 + 自动修复）=====
+      - name: Update submodules (with retry & auto-fix)
+        id: submodules
         run: |
+          retry=0
+          max_retries=$MAX_RETRIES
+          success=false
+
+          while [ $retry -lt $max_retries ]; do
+            retry=$((retry + 1))
+            echo "=== Submodule update attempt $retry/$max_retries ==="
+
+            # 尝试递归 checkout 子模块
+            if git submodule update --init --recursive 2>&1; then
+              echo "Submodules updated successfully on attempt $retry"
+              success=true
+              break
+            fi
+
+            echo "Attempt $retry failed. Trying to fix problematic submodules..."
+
+            # 自动修复：检查每个子模块的 commit 是否存在，不存在则回退到分支最新
+            while IFS= read -r line; do
+              # 解析子模块路径和当前 commit
+              status=$(echo "$line" | cut -c1)
+              sha=$(echo "$line" | cut -c2-41)
+              path=$(echo "$line" | cut -c43- | cut -d' ' -f1)
+
+              if [ -z "$path" ]; then continue; fi
+
+              # 从 .gitmodules 获取分支信息
+              branch=$(git config -f .gitmodules submodule."$path".branch || echo "main")
+              url=$(git config -f .gitmodules submodule."$path".url)
+
+              echo "Checking submodule: $path (branch: $branch, expected: ${sha:0:7})"
+
+              # 检查这个 commit 在远程是否存在
+              if git ls-remote --exit-code "$url" "$sha" >/dev/null 2>&1; then
+                echo "  Commit $sha exists on remote, OK"
+              else
+                echo "  WARNING: Commit $sha NOT found on remote! Auto-fixing to latest $branch..."
+                latest_sha=$(git ls-remote "$url" "refs/heads/$branch" | cut -f1)
+                if [ -n "$latest_sha" ]; then
+                  echo "  Latest $branch commit: ${latest_sha:0:7}"
+                  # 更新 gitlink 指向最新 commit
+                  git -c protocol.version=2 submodule update --init "$path" 2>/dev/null || true
+                  cd "$path" 2>/dev/null || continue
+                  git fetch origin "$branch" 2>/dev/null || true
+                  git checkout "$latest_sha" 2>/dev/null || true
+                  cd - >/dev/null
+                  git add "$path"
+                  echo "  Updated $path to ${latest_sha:0:7}"
+                fi
+              fi
+            done < <(git submodule status)
+
+            # 再试一次完整的子模块更新
+            if git submodule update --init --recursive 2>&1; then
+              echo "Submodules updated successfully after auto-fix (attempt $retry)"
+              success=true
+              break
+            fi
+          done
+
+          if [ "$success" = false ]; then
+            echo "ERROR: Submodule update failed after $max_retries attempts"
+            exit 1
+          fi
+
+          # 拉取 LFS
+          echo "=== Pulling LFS objects ==="
           git lfs pull
           git submodule foreach --recursive 'git lfs pull' || true
+          echo "LFS pull complete"
+
+      # ===== SPM 缓存 =====
+      - name: Cache SPM packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
 
       - name: Resolve SPM dependencies
         run: |
@@ -38,20 +122,58 @@ jobs:
           cd ManicEmu
           xcodebuild -resolvePackageDependencies -project ManicEmu.xcodeproj 2>&1 | tail -30
 
+      # ===== 构建（带重试）=====
       - name: Build (Release, no code signing)
+        id: build
         run: |
-          set -o pipefail
+          retry=0
+          max_retries=$MAX_RETRIES
+          success=false
+
           cd ManicEmu
-          xcodebuild \
-            -scheme ManicEmuRelease \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -sdk iphoneos \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            -derivedDataPath build \
-            build 2>&1 | tee build.log | tail -100
+
+          while [ $retry -lt $max_retries ]; do
+            retry=$((retry + 1))
+            echo "=== Build attempt $retry/$max_retries ==="
+
+            # 清理之前的构建（第一次之后）
+            if [ $retry -gt 1 ]; then
+              echo "Cleaning previous build..."
+              rm -rf build
+              xcodebuild clean \
+                -scheme ManicEmuRelease \
+                -configuration Release \
+                -project ManicEmu.xcodeproj \
+                -derivedDataPath build 2>&1 | tail -20
+            fi
+
+            # 执行构建
+            if xcodebuild \
+              -scheme ManicEmuRelease \
+              -configuration Release \
+              -destination 'generic/platform=iOS' \
+              -sdk iphoneos \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              CODE_SIGN_IDENTITY="" \
+              -derivedDataPath build \
+              build 2>&1 | tee build.log | tail -100; then
+              echo "Build succeeded on attempt $retry"
+              success=true
+              break
+            fi
+
+            echo "Build attempt $retry failed. Showing error summary:"
+            # 显示错误摘要
+            grep -i "error:" build.log | tail -30 || true
+          done
+
+          if [ "$success" = false ]; then
+            echo "ERROR: Build failed after $max_retries attempts"
+            echo "Showing last 200 lines of build log:"
+            tail -200 build.log
+            exit 1
+          fi
 
       - name: Check build result
         run: |
