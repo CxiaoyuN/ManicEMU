@@ -41,7 +41,8 @@ class LandscapeBackgroundView: BaseView {
     ///当前背景 nil表示默认Shader背景
     private var background: Background? = nil
     
-    private var metalToyView: MetalToyView? = nil
+    // TEMP DISABLED: MetalToyView source missing from Libretro submodule
+    // private var metalToyView: MetalToyView? = nil
     var currentShaderToy: ShaderToy? = nil
     
     ///图片背景容器
@@ -108,18 +109,8 @@ class LandscapeBackgroundView: BaseView {
         clipsToBounds = true
         
         currentShaderToy = ShaderToy.getUsingShaderToy()
-        if let currentShaderToy,
-            let script = currentShaderToy.script {
-            let view = MetalToyView(glslSource: script)
-            view.renderScale = currentShaderToy.preferredRenderScale
-            view.preferredFramesPerSecond = 30
-            addSubview(view)
-            view.snp.makeConstraints { make in
-                make.edges.equalToSuperview()
-            }
-            view.start()
-            metalToyView = view
-        }
+        // TEMP DISABLED: MetalToyView not available - using solid color background
+        backgroundColor = R.Color.BackgroundPrimary
 
         addSubview(imageContainerView)
         imageContainerView.alpha = 0
@@ -272,24 +263,8 @@ class LandscapeBackgroundView: BaseView {
     
     //MARK: - Private
     private func showShader(forceReload: Bool, animated: Bool) {
-        if let currentShaderToy,
-            let script = currentShaderToy.script {
-            if forceReload || metalToyView == nil {
-                let newMetalToyView = MetalToyView(glslSource: script)
-                newMetalToyView.renderScale = currentShaderToy.preferredRenderScale
-                newMetalToyView.preferredFramesPerSecond = 30
-                insertSubview(newMetalToyView, belowSubview: imageContainerView)
-                newMetalToyView.snp.makeConstraints { make in
-                    make.edges.equalToSuperview()
-                }
-                metalToyView?.stop()
-                metalToyView?.removeFromSuperview()
-                metalToyView = newMetalToyView
-            }
-        } else {
-            metalToyView?.stop()
-            metalToyView?.removeFromSuperview()
-        }
+        // TEMP DISABLED: MetalToyView not available - using solid color background
+        backgroundColor = R.Color.BackgroundPrimary
         
         applyPlaybackState()
         
@@ -320,8 +295,8 @@ class LandscapeBackgroundView: BaseView {
             self.imageContainerView.alpha = 1
         }
         let completion = {
-            //图片完全展示后暂停Shader渲染以节省功耗
-            self.metalToyView?.pause()
+            // TEMP DISABLED: MetalToyView not available
+            // self.metalToyView?.pause()
         }
         if animated {
             UIView.animate(withDuration: 0.35, animations: animations) { _ in
@@ -357,11 +332,12 @@ class LandscapeBackgroundView: BaseView {
     }
     
     private func applyPlaybackState() {
-        if isRenderingSuspended || !isShaderMode {
-            metalToyView?.pause()
-        } else {
-            metalToyView?.start()
-        }
+        // TEMP DISABLED: MetalToyView not available
+        // if isRenderingSuspended || !isShaderMode {
+        //     metalToyView?.pause()
+        // } else {
+        //     metalToyView?.start()
+        // }
     }
     
     private func updateVignetteIfNeeded() {
