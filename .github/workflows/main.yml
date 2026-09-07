@@ -120,7 +120,9 @@ jobs:
         run: |
           set -o pipefail
           cd ManicEmu
-          xcodebuild -resolvePackageDependencies -project ManicEmu.xcodeproj 2>&1 | tail -30
+          xcodebuild -resolvePackageDependencies \
+            -skipPackagePluginValidation \
+            -project ManicEmu.xcodeproj 2>&1 | tail -30
 
       # ===== 构建（带重试）=====
       - name: Build (Release, no code signing)
@@ -143,16 +145,19 @@ jobs:
               xcodebuild clean \
                 -scheme ManicEmuRelease \
                 -configuration Release \
+                -skipPackagePluginValidation \
                 -project ManicEmu.xcodeproj \
                 -derivedDataPath build 2>&1 | tail -20
             fi
 
             # 执行构建
+            set -o pipefail
             if xcodebuild \
               -scheme ManicEmuRelease \
               -configuration Release \
               -destination 'generic/platform=iOS' \
               -sdk iphoneos \
+              -skipPackagePluginValidation \
               CODE_SIGNING_ALLOWED=NO \
               CODE_SIGNING_REQUIRED=NO \
               CODE_SIGN_IDENTITY="" \
